@@ -37,16 +37,9 @@ selected_tables AS (
     ))
 ),
 existing_tables AS (
-    -- Garante que a tabela existe em ambos os schemas para evitar erro de objeto inválido
-    SELECT o.table_name 
-    FROM all_tables o
-    JOIN all_tables d ON o.table_name = d.table_name
-    CROSS JOIN params p
-    WHERE o.owner = p.schema_origem 
-      AND d.owner = p.schema_destino
-      AND o.table_name IN (SELECT table_name FROM selected_tables)
+    SELECT ut.table_name FROM all_tables ut CROSS JOIN params p 
+    WHERE ut.owner = p.schema_origem AND ut.table_name IN (SELECT table_name FROM selected_tables)
 ),
--- PK INFO: Baseada no DESTINO (quem recebe o ERP_CODE), mas usando nomes da ORIGEM no concat
 pk_info AS (
     SELECT acc.table_name,
            CASE 
@@ -59,7 +52,6 @@ pk_info AS (
     CROSS JOIN params p WHERE ac.owner = p.schema_destino AND ac.constraint_type = 'P'
     GROUP BY acc.table_name
 ),
--- FK MAPPING: Olha as constraints do DESTINO, mas mapeia para colunas da ORIGEM
 fk_constraints_mapped AS (
     SELECT fk.table_name AS child_table, pk.table_name AS parent_table, fk.constraint_name,
            'j' || ROW_NUMBER() OVER (ORDER BY fk.table_name, fk.constraint_name) AS join_alias,
@@ -95,22 +87,19 @@ final_joins AS (
     FROM fk_constraints_mapped GROUP BY child_table
 ),
 migration_components AS (
-    SELECT d_atc.table_name, pki.pk_expr,
-           -- INSERT: Colunas do Destino
-           LISTAGG(d_atc.column_name, ',' || CHR(10)) WITHIN GROUP (ORDER BY d_atc.column_id) AS all_columns_list,
-           -- SELECT: Mapeamento da Origem
+    SELECT et.table_name, pki.pk_expr,
+           LISTAGG(atc.column_name, ',' || CHR(10)) WITHIN GROUP (ORDER BY atc.column_id) AS all_columns_list,
            LISTAGG(CASE 
-                WHEN d_atc.column_name = 'ERP_CODE' THEN pki.pk_expr || ' AS ERP_CODE'
-                WHEN cfm.column_name IS NOT NULL THEN cfm.join_alias || '.' || cfm.parent_pk_col || ' AS ' || d_atc.column_name
-                ELSE 'src.' || o_atc.column_name 
-           END, ',' || CHR(10)) WITHIN GROUP (ORDER BY d_atc.column_id) AS select_columns_mapped
-    FROM all_tab_cols d_atc
-    JOIN params p ON d_atc.owner = p.schema_destino
-    JOIN all_tab_cols o_atc ON o_atc.table_name = d_atc.table_name AND o_atc.column_name = d_atc.column_name AND o_atc.owner = p.schema_origem
-    JOIN pk_info pki ON pki.table_name = d_atc.table_name
-    LEFT JOIN column_fk_mapping cfm ON cfm.table_name = d_atc.table_name AND cfm.column_name = d_atc.column_name
-    WHERE d_atc.table_name IN (SELECT table_name FROM existing_tables)
-    GROUP BY d_atc.table_name, pki.pk_expr
+                WHEN atc.column_name = 'ERP_CODE' THEN pki.pk_expr || ' AS ERP_CODE'
+                WHEN cfm.column_name IS NOT NULL THEN cfm.join_alias || '.' || cfm.parent_pk_col || ' AS ' || atc.column_name
+                ELSE 'src.' || atc.column_name 
+           END, ',' || CHR(10)) WITHIN GROUP (ORDER BY atc.column_id) AS select_columns_mapped
+    FROM existing_tables et
+    JOIN all_tab_cols atc ON atc.table_name = et.table_name
+    JOIN pk_info pki ON pki.table_name = et.table_name
+    LEFT JOIN column_fk_mapping cfm ON cfm.table_name = et.table_name AND cfm.column_name = atc.column_name
+    CROSS JOIN params p WHERE atc.owner = p.schema_destino
+    GROUP BY et.table_name, pki.pk_expr
 ),
 tree(child_table, parent_table, lvl) AS (
     SELECT child_table, parent_table, 1 FROM (SELECT DISTINCT child_table, parent_table FROM fk_constraints_mapped)
@@ -131,8 +120,7 @@ SELECT
     'SELECT ' || CHR(10) || mc.select_columns_mapped || CHR(10) ||
     'FROM ' || (SELECT schema_origem FROM params) || '.' || mc.table_name || ' src' || CHR(10) ||
     fj.join_clauses || CHR(10) ||
-    'WHERE NOT EXISTS (SELECT 1 FROM ' || (SELECT schema_destino FROM params) || '.' || mc.table_name || ' dest WHERE dest.ERP_CODE = ' || mc.pk_expr || ');' || CHR(10) ||
-    'COMMIT;' as script_sql
+    'WHERE NOT EXISTS (SELECT 1 FROM ' || (SELECT schema_destino FROM params) || '.' || mc.table_name || ' dest WHERE dest.ERP_CODE = ' || mc.pk_expr || ');' as script_sql
 FROM migration_components mc
 JOIN depths d ON mc.table_name = d.table_name
 LEFT JOIN final_joins fj ON fj.child_table = mc.table_name
