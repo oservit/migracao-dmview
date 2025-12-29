@@ -1,6 +1,7 @@
 -- Ordem: 037 | Tabela: NODE | Depth: 2
 INSERT INTO NODE
 (
+GRAPHIC_ID,
 NODE_ICON,
 NODE_X,
 NODE_Y,
@@ -8,6 +9,7 @@ NOVACOLUNA,
 ERP_CODE
 )
 SELECT
+j1.ID AS GRAPHIC_ID,
 src.NODE_ICON,
 src.NODE_X,
 src.NODE_Y,

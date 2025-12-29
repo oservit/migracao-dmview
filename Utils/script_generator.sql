@@ -75,12 +75,22 @@ migration_components AS (
     SELECT 
         et.table_name,
         pk.pk_column,
-        LISTAGG(CASE WHEN atc.column_name = pk.pk_column THEN NULL ELSE atc.column_name END, ',' || CHR(10)) 
-            WITHIN GROUP (ORDER BY atc.column_id) AS all_columns_list,
-        
+        -- Alteração aqui: Se a PK for uma FK, ela ENTRA na lista de colunas
         LISTAGG(
             CASE 
-                WHEN atc.column_name = pk.pk_column THEN NULL 
+                WHEN atc.column_name = pk.pk_column AND rd_pk.fk_column IS NULL THEN NULL 
+                ELSE atc.column_name 
+            END, ',' || CHR(10)) 
+            WITHIN GROUP (ORDER BY atc.column_id) AS all_columns_list,
+        
+        -- Alteração aqui: Se a PK for uma FK, ela recebe o j_id.ID
+        LISTAGG(
+            CASE 
+                WHEN atc.column_name = pk.pk_column THEN
+                    CASE 
+                        WHEN rd_pk.fk_column IS NOT NULL THEN 'j' || atc.column_id || '.ID AS ' || atc.column_name
+                        ELSE NULL -- Se for PK pura, continua omitindo para a trigger agir
+                    END
                 WHEN rd.fk_column IS NOT NULL THEN 'j' || atc.column_id || '.ID AS ' || atc.column_name 
                 WHEN atc.column_name = 'ERP_CODE' THEN 'src.' || pk.pk_column || ' AS ' || atc.column_name 
                 ELSE 'src.' || atc.column_name 
@@ -89,17 +99,20 @@ migration_components AS (
 
         LISTAGG(
             CASE 
-                WHEN rd.fk_column IS NOT NULL THEN 
-                    'LEFT JOIN ' || rd.parent_table || ' j' || atc.column_id || 
+                WHEN rd.fk_column IS NOT NULL OR (atc.column_name = pk.pk_column AND rd_pk.fk_column IS NOT NULL) THEN 
+                    'LEFT JOIN ' || COALESCE(rd.parent_table, rd_pk.parent_table) || ' j' || atc.column_id || 
                     ' ON j' || atc.column_id || 
-                    CASE WHEN rd.parent_table IN (SELECT table_name FROM static_tables) THEN '.ID' ELSE '.ERP_CODE' END || 
-                    ' = src.' || rd.fk_column
+                    CASE WHEN COALESCE(rd.parent_table, rd_pk.parent_table) IN (SELECT table_name FROM static_tables) THEN '.ID' ELSE '.ERP_CODE' END || 
+                    ' = src.' || atc.column_name
                 ELSE NULL 
             END, CHR(10)) WITHIN GROUP (ORDER BY atc.column_id) AS join_clauses
     FROM existing_tables et
     JOIN all_tab_cols atc ON atc.owner = (SELECT schema_name FROM params) AND atc.table_name = et.table_name
     JOIN primary_keys pk ON pk.table_name = et.table_name
+    -- Join para detectar se a coluna ATUAL é uma FK
     LEFT JOIN relations_detailed rd ON rd.child_table = et.table_name AND rd.fk_column = atc.column_name
+    -- Join específico para checar se a PK da tabela é uma FK para outra
+    LEFT JOIN relations_detailed rd_pk ON rd_pk.child_table = et.table_name AND rd_pk.fk_column = pk.pk_column
     GROUP BY et.table_name, pk.pk_column
 ),
 
