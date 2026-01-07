@@ -1,5 +1,8 @@
 
-WITH target_tables AS (
+WITH params AS (
+    SELECT 'CLARO' AS schema_destino FROM dual
+),
+target_tables AS (
     SELECT 'CIRCUIT_END' as table_name, 'ID_CIRCUIT_END' as pk_column, 'id_generator' as seq_name FROM dual UNION ALL
     SELECT 'CIRCUIT_FILTER', 'ID_CIRCUIT_FILTER', 'id_generator' FROM dual UNION ALL
     SELECT 'CIRCUIT_PORT_END', 'ID_CIRCUIT_PORT_END', 'id_generator' FROM dual UNION ALL
@@ -26,12 +29,12 @@ WITH target_tables AS (
 )
 SELECT 
     table_name,
-    'CREATE OR REPLACE TRIGGER TRG_BI_' || table_name || CHR(10) ||
-    'BEFORE INSERT ON ' || table_name || CHR(10) || 
+    'CREATE OR REPLACE TRIGGER ' || (SELECT schema_destino FROM params) || '.TRG_BI_' || table_name || CHR(10) ||
+    'BEFORE INSERT ON ' || (SELECT schema_destino FROM params) || '.' || table_name || CHR(10) || 
     'FOR EACH ROW' || CHR(10) ||
     'BEGIN' || CHR(10) ||
     '  IF :NEW.' || pk_column || ' IS NULL THEN' || CHR(10) ||
-    '    SELECT ' || seq_name || '.NEXTVAL INTO :NEW.' || pk_column || ' FROM DUAL;' || CHR(10) ||
+    '    SELECT ' || (SELECT schema_destino FROM params) || '.' || seq_name || '.NEXTVAL INTO :NEW.' || pk_column || ' FROM DUAL;' || CHR(10) ||
     '  END IF;' || CHR(10) ||
     'END;' as trigger_script
 FROM target_tables;
