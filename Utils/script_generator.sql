@@ -1,3 +1,4 @@
+
 WITH params AS (
     SELECT 
         'OI' AS schema_origem, 
